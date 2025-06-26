@@ -1,51 +1,62 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"net/http"
+	"context"
 
-	"github.com/gorilla/mux"
-	"github.com/joho/godotenv"
-	"github.com/rs/cors"
-
-	"github.com/cristiantebaldi/class-organize-api/config"
-	"github.com/cristiantebaldi/class-organize-api/controllers"
-	"github.com/cristiantebaldi/class-organize-api/models"
+	"github.com/cristiantebaldi/class-organize-api/internals/adapter/postgres"
+	"github.com/cristiantebaldi/class-organize-api/internals/util"
+	"github.com/cristiantebaldi/class-organize-api/pkg/di"
+	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
 )
 
+func init() {
+	viper.SetConfigFile(`config.json`)
+	err := viper.ReadInConfig()
+	if err != nil {
+		panic(err)
+	}
+}
+
 func main() {
-	// Carregar variáveis de ambiente
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("Arquivo .env não encontrado, usando variáveis de ambiente do sistema")
-	}
+	ctx := context.Background()
+	conn := postgres.Initialize(ctx)
+	validate := util.NewValidator()
+	defer conn.Close()
 
-	// Inicializar conexão com o banco de dados
-	db, err := config.SetupDB()
-	if err != nil {
-		log.Fatalf("Erro ao conectar ao banco de dados: %v", err)
-	}
+	alocacaoService := di.ConfigAlocacaoDI(conn, validate)
+	professorService := di.ConfigProfessorDI(conn, validate)
+	salaService := di.ConfigSalaDI(conn, validate)
+	turmaService := di.ConfigTurmaDI(conn, validate)
 
-	// Criar tabelas se não existirem
-	models.MigrateTables(db)
+	router := gin.Default()
 
-	// Inicializar o router
-	r := mux.NewRouter()
+	router.POST("/alocacao", alocacaoService.Create)
+	router.PUT("/alocacao/:id", alocacaoService.Update)
+	router.GET("/alocacao", alocacaoService.Fetch)
+	router.GET("/alocacao/:id", alocacaoService.GetByID)
+	router.DELETE("/alocacao/:id", alocacaoService.Delete)
+	router.POST("/alocacao/automatico", alocacaoService.CreateAlocacoesAutomaticamente)
+	
+	router.POST("/professor", professorService.Create)
+	router.PUT("/professor/:id", professorService.Update)
+	router.GET("/professor", professorService.Fetch)
+	router.GET("/professor/:id", professorService.GetByID)
+	router.DELETE("/professor/:id", professorService.Delete)
+	
+	router.POST("/sala", salaService.Create)
+	router.PUT("/sala/:id", salaService.Update)
+	router.GET("/sala", salaService.Fetch)
+	router.GET("/sala/:id", salaService.GetByID)
+	router.DELETE("/sala/:id", salaService.Delete)
+	
+	router.POST("/turma", turmaService.Create)
+	router.PUT("/turma/:id", turmaService.Update)
+	router.GET("/turma", turmaService.Fetch)
+	router.GET("/turma/:id", turmaService.GetByID)
+	router.DELETE("/turma/:id", turmaService.Delete)
+	
+	port := viper.GetString("server.http.port")
 
-	// Configurar CORS
-	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Content-Type", "Authorization"},
-		AllowCredentials: true,
-	})
-
-	// Configurar rotas
-	controllers.SetupRoutes(r, db)
-
-	// Iniciar o servidor
-	port := "8080"
-	fmt.Printf("Servidor rodando na porta %s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, c.Handler(r)))
+	router.Run(":" + port)
 }
